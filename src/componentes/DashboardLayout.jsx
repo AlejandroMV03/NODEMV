@@ -1,19 +1,16 @@
 /* src/componentes/DashboardLayout.jsx */
 import React, { useState } from 'react';
 import { crearNota, actualizarNota } from '../servicios/notas'; 
-
-// --- IMPORTAMOS LAS VISTAS ---
 import DashboardHome from './views/DashboardHome';
 import ProjectsView from './views/ProjectsView';
 import SnippetsView from './views/SnippetsView';
 import EditorView from './views/EditorView';
-import TrashView from './views/TrashView'; // <--- 1. IMPORTAMOS LA NUEVA VISTA
+import TrashView from './views/TrashView'; 
 
-// Iconos
 const TerminalIcon = () => <span>_</span>;
 const FolderIcon = () => <span>📁</span>;
 const CodeIcon = () => <span>📝</span>;
-const TrashIcon = () => <span>🗑️</span>; // <--- ICONO PAPELERA
+const TrashIcon = () => <span>🗑️</span>; 
 
 export default function DashboardLayout({ user, onLogout }) {
   const [currentView, setCurrentView] = useState('dashboard');
@@ -24,31 +21,34 @@ export default function DashboardLayout({ user, onLogout }) {
     setCurrentView('editor'); 
   };
 
-  const handleGuardarDesdeEditor = async (id, titulo, contenido, etiqueta, cover) => { // <--- Agregamos 'cover' aquí
-    let exito = false;
+  
+  const handleGuardarDesdeEditor = async (id, titulo, contenido, etiqueta, cover) => {
     if (id) {
-        // Al editar
-        exito = await actualizarNota(id, titulo, contenido, etiqueta, cover);
+        // Si ya existe, actualizamos en silencio
+        await actualizarNota(id, titulo, contenido, etiqueta, cover);
     } else {
-        // Al crear (userId, titulo, contenido, etiqueta, proyectoId=null, carpetaId=null, cover)
-        exito = await crearNota(user.uid, titulo, contenido, etiqueta, null, null, cover);
+        // Si es nueva, la creamos y recuperamos el ID
+        const newId = await crearNota(user.uid, titulo, contenido, etiqueta, null, null, cover);
+        
+        // ACTUALIZAMOS EL ESTADO CON EL NUEVO ID
+        // Esto es clave para que el editor sepa que ya dejó de ser "nueva"
+        if (newId) {
+            setNotaActiva(prev => ({
+                ...prev,
+                id: newId,
+                titulo, contenido, etiqueta, cover
+            }));
+        }
     }
-
-    if (exito) {
-        setCurrentView('dashboard'); 
-        setNotaActiva(null);
-    } else {
-        alert("Error al guardar (Revisa si la imagen es muy pesada)");
-    }
-};
+  };
 
   const renderContent = () => {
       switch(currentView) {
           case 'dashboard': return <DashboardHome user={user} onEdit={handleAbrirEditor} />;
-          case 'editor': return <EditorView nota={notaActiva} onGuardar={handleGuardarDesdeEditor} onVolver={() => setCurrentView('dashboard')} />;
+          case 'editor': return <EditorView user={user} nota={notaActiva} onGuardar={handleGuardarDesdeEditor} onVolver={() => setCurrentView('dashboard')} />;
           case 'projects': return <ProjectsView user={user} />;
           case 'snippets': return <SnippetsView />;
-          case 'trash': return <TrashView user={user} />; // <--- 2. RUTA DE PAPELERA
+          case 'trash': return <TrashView user={user} />;
           default: return <DashboardHome user={user} onEdit={handleAbrirEditor} />;
       }
   };
@@ -68,7 +68,6 @@ export default function DashboardLayout({ user, onLogout }) {
             <div onClick={() => setCurrentView('projects')} className={`px-4 py-2 cursor-pointer flex items-center gap-3 transition-colors ${currentView === 'projects' ? 'bg-purple-500/10 text-purple-400 border-l-2 border-purple-500' : 'hover:bg-white/5'}`}><FolderIcon /> Mis Proyectos</div>
             <div onClick={() => setCurrentView('snippets')} className={`px-4 py-2 cursor-pointer flex items-center gap-3 transition-colors ${currentView === 'snippets' ? 'bg-blue-500/10 text-blue-400 border-l-2 border-blue-500' : 'hover:bg-white/5'}`}><CodeIcon /> Snippets</div>
             
-            {/* 3. BOTÓN PAPELERA */}
             <div onClick={() => setCurrentView('trash')} className={`mt-8 px-4 py-2 cursor-pointer flex items-center gap-3 transition-colors text-red-400 hover:text-red-300 ${currentView === 'trash' ? 'bg-red-900/20 border-l-2 border-red-500' : 'hover:bg-white/5'}`}>
                 <TrashIcon /> Papelera
             </div>

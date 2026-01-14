@@ -14,11 +14,13 @@
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "firebase": "^12.7.0",
+    "html2pdf.js": "^0.14.0",
     "quill-blot-formatter": "^1.0.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-quill": "^2.0.0",
     "react-quill-new": "^3.7.0",
+    "react-to-print": "^3.2.0",
     "three": "^0.182.0"
   },
   "devDependencies": {
