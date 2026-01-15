@@ -3,8 +3,9 @@ import React, { useState, useRef, useMemo, useEffect } from 'react';
 import ReactQuill from 'react-quill-new'; 
 import 'react-quill-new/dist/quill.snow.css';
 import { useReactToPrint } from 'react-to-print';
-import { suscribirNota, registrarPresencia, retirarPresencia, suscribirPresencia } from '../../servicios/notas'; // <--- Importamos presencia
-
+import { suscribirNota, registrarPresencia, retirarPresencia, suscribirPresencia } from '../../servicios/notas';
+import { guardarVersion } from '../../servicios/historial'; 
+import TimeMachine from '../TimeMachine';
 import BlotFormatter from 'quill-blot-formatter';
 
 // --- CONFIGURACIÓN GLOBAL ---
@@ -28,15 +29,14 @@ try {
     }
 } catch (error) { console.error("Error Quill:", error); }
 
-// RECIBIMOS 'user' COMO PROP NUEVA
 export default function EditorView({ user, nota, onGuardar, onVolver, readOnly }) {
   const [titulo, setTitulo] = useState(nota ? nota.titulo : '');
   const [contenido, setContenido] = useState(nota ? nota.contenido : '');
   const [etiqueta, setEtiqueta] = useState(nota ? nota.etiqueta : 'General');
-  const [cover, setCover] = useState(nota?.cover || ""); 
   
-  // ESTADOS UI
+  // UI
   const [mostrandoGaleria, setMostrandoGaleria] = useState(false);
+  const [mostrandoTimeMachine, setMostrandoTimeMachine] = useState(false);
   const [terminoBusqueda, setTerminoBusqueda] = useState("");
   const [resultadosBusqueda, setResultadosBusqueda] = useState([]);
   const [buscando, setBuscando] = useState(false);
@@ -45,18 +45,27 @@ export default function EditorView({ user, nota, onGuardar, onVolver, readOnly }
   const [ultimoGuardado, setUltimoGuardado] = useState("Sin cambios recientes");
   const [icono] = useState("📝"); 
   
-  // --- ESTADO DE PRESENCIA ---
+  // Presencia
   const [usuariosActivos, setUsuariosActivos] = useState([]);
 
+  // REFERENCIAS (Para el temporizador)
   const quillRef = useRef(null);
   const printRef = useRef(null);
   const isLocalChange = useRef(false);
-  const isFirstLoad = useRef(true); 
+  const isFirstLoad = useRef(true);
+  
+  // Guardamos el estado actual en refs para que el setInterval pueda leerlo
+  // sin necesidad de reiniciarse cada vez que escribes.
+  const tituloRef = useRef(titulo);
+  const contenidoRef = useRef(contenido);
+
+  // Mantenemos las refs actualizadas
+  useEffect(() => { tituloRef.current = titulo; }, [titulo]);
+  useEffect(() => { contenidoRef.current = contenido; }, [contenido]);
 
   // 1. ESCUCHA DE DATOS Y PRESENCIA
   useEffect(() => {
       if (nota?.id) {
-          // A. Suscribirse a cambios del contenido
           const unsubNota = suscribirNota(nota.id, (data) => {
               if (isLocalChange.current) { isLocalChange.current = false; return; }
               if (data.titulo !== titulo) setTitulo(data.titulo);
@@ -64,19 +73,13 @@ export default function EditorView({ user, nota, onGuardar, onVolver, readOnly }
               if (data.etiqueta !== etiqueta) setEtiqueta(data.etiqueta);
           });
 
-          // B. Registrar mi presencia
-          if (user) {
-              registrarPresencia(nota.id, user);
-          }
+          if (user) registrarPresencia(nota.id, user);
 
-          // C. Ver quién más está
           const unsubPresencia = suscribirPresencia(nota.id, (usuarios) => {
-              // Filtramos para no mostrarnos a nosotros mismos en la lista de "otros"
               const otros = usuarios.filter(u => u.uid !== user?.uid);
               setUsuariosActivos(otros);
           });
 
-          // D. Limpieza al salir (IMPORTANTE)
           return () => {
               unsubNota();
               if (unsubPresencia) unsubPresencia();
@@ -85,7 +88,7 @@ export default function EditorView({ user, nota, onGuardar, onVolver, readOnly }
       }
   }, [nota?.id]);
 
-  // 2. AUTOGUARDADO
+  // 2. AUTOGUARDADO (Cada 2 segundos al escribir - Sobreescribe documento actual)
   useEffect(() => {
       if (isFirstLoad.current) { isFirstLoad.current = false; return; }
       if (!autoGuardado || readOnly || !nota?.id) return;
@@ -99,6 +102,41 @@ export default function EditorView({ user, nota, onGuardar, onVolver, readOnly }
       return () => clearTimeout(timer);
   }, [titulo, contenido, etiqueta, autoGuardado]);
 
+  // 3. 🔥 HISTORIAL AUTOMÁTICO (CADA 20 MINUTOS) 🔥
+  useEffect(() => {
+      if (readOnly || !nota?.id) return;
+
+      // 20 minutos = 20 * 60 * 1000 milisegundos
+      const intervaloHistorial = setInterval(async () => {
+          console.log("⏳ Creando punto de control automático (20 min)...");
+          await guardarVersion(
+              nota.id, 
+              tituloRef.current, 
+              contenidoRef.current, 
+              user, 
+              "Auto - 20min"
+          );
+          setUltimoGuardado("Punto de historial creado");
+      }, 20 * 60 * 1000);
+
+      return () => clearInterval(intervaloHistorial);
+  }, [nota?.id]); // Solo se reinicia si cambias de documento
+
+  // 4. 🔥 FUNCIÓN DE SALIDA INTELIGENTE 🔥
+  const handleVolverConGuardado = async () => {
+      // Si hay un documento válido, guardamos versión antes de salir
+      if (nota?.id && !readOnly) {
+          // 1. Guardado final en BD principal
+          await onGuardar(nota.id, titulo, contenido, etiqueta, "");
+          
+          // 2. Guardado en HISTORIAL (Máquina del Tiempo)
+          await guardarVersion(nota.id, titulo, contenido, user, "Auto - Al Salir");
+      }
+      
+      // 3. Ejecutamos la salida real
+      onVolver();
+  };
+
   const handleSubmit = async () => {
     if (!titulo) return alert("El título es obligatorio");
     setGuardando(true);
@@ -106,6 +144,14 @@ export default function EditorView({ user, nota, onGuardar, onVolver, readOnly }
     await onGuardar(nota?.id, titulo, contenido, etiqueta, ""); 
     setGuardando(false);
     setUltimoGuardado("Guardado manualmente");
+  };
+
+  const handleRestaurarVersion = async (versionAntigua) => {
+      setTitulo(versionAntigua.titulo);
+      setContenido(versionAntigua.contenido);
+      isLocalChange.current = true;
+      await onGuardar(nota.id, versionAntigua.titulo, versionAntigua.contenido, etiqueta, "");
+      alert("✅ Documento restaurado con éxito.");
   };
 
   const handlePrint = useReactToPrint({
@@ -152,14 +198,14 @@ export default function EditorView({ user, nota, onGuardar, onVolver, readOnly }
       {/* BARRA SUPERIOR */}
       <div className="h-12 flex items-center justify-between px-4 border-b border-white/5 bg-[#050505]/80 backdrop-blur-md sticky top-0 z-20 print:hidden">
         <div className="flex items-center gap-2 text-sm text-gray-400">
-           <button onClick={onVolver} className="hover:bg-white/10 p-1 rounded transition-colors text-white">⬅ Volver</button>
+           {/* 🔥 BOTÓN VOLVER MODIFICADO 🔥 */}
+           <button onClick={handleVolverConGuardado} className="hover:bg-white/10 p-1 rounded transition-colors text-white">⬅ Volver</button>
            <span className="text-gray-600">/</span><span className="text-gray-500">{etiqueta}</span><span className="text-gray-600">/</span>
            <span className="text-white font-medium truncate max-w-[200px]">{titulo || "Sin Título"}</span>
-           
         </div>
         
         <div className="flex items-center gap-4">
-             {/* --- INDICADORES DE PRESENCIA --- */}
+             {/* PRESENCIA */}
              {usuariosActivos.length > 0 && (
                  <div className="flex items-center -space-x-2 mr-2">
                      {usuariosActivos.map((u, i) => (
@@ -171,10 +217,6 @@ export default function EditorView({ user, nota, onGuardar, onVolver, readOnly }
                                      {u.displayName ? u.displayName[0].toUpperCase() : '?'}
                                  </div>
                              )}
-                             {/* Tooltip */}
-                             <div className="absolute top-full mt-1 left-1/2 -translate-x-1/2 bg-black text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50">
-                                 {u.displayName} está aquí
-                             </div>
                          </div>
                      ))}
                      <span className="text-xs text-green-500 ml-3 animate-pulse">• {usuariosActivos.length} online</span>
@@ -185,6 +227,12 @@ export default function EditorView({ user, nota, onGuardar, onVolver, readOnly }
                 <span className={`text-xs block font-bold ${guardando ? 'text-yellow-500' : 'text-gray-500'}`}>{guardando ? "Guardando..." : "Guardado"}</span>
                 <span className="text-[10px] text-gray-600 block">{ultimoGuardado}</span>
              </div>
+             
+             {/* MÁQUINA DEL TIEMPO (Solo el reloj, quité el disquete manual extra) */}
+             {!readOnly && nota?.id && (
+                <button onClick={() => setMostrandoTimeMachine(true)} className="text-gray-400 hover:text-blue-400 text-lg" title="Ver historial de versiones">⏳</button>
+             )}
+
              {!readOnly && nota?.id && (
                  <div className="flex items-center gap-2" title="Autoguardado">
                      <div onClick={() => setAutoGuardado(!autoGuardado)} className={`w-8 h-4 rounded-full cursor-pointer relative transition-colors ${autoGuardado ? 'bg-green-600' : 'bg-gray-700'}`}>
@@ -231,6 +279,15 @@ export default function EditorView({ user, nota, onGuardar, onVolver, readOnly }
       </div>
 
       {mostrandoGaleria && (<div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden"><div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setMostrandoGaleria(false)}></div><div className="relative bg-[#111] border border-gray-700 w-full max-w-3xl rounded-xl shadow-2xl p-0 animate-slideUp overflow-hidden max-h-[85vh] flex flex-col"><div className="p-4 border-b border-gray-800 flex items-center justify-between"><h3 className="text-white font-bold text-lg">Buscar Imagen</h3><button onClick={() => setMostrandoGaleria(false)} className="text-gray-400 hover:text-white">✕</button></div><div className="p-4 bg-[#0a0a0a]"><form onSubmit={buscarImagenes} className="relative"><span className="absolute left-3 top-2.5 text-gray-500">🔍</span><input type="text" autoFocus placeholder="Tema..." className="w-full bg-[#1a1a1a] border border-gray-700 text-white pl-10 pr-4 py-2 rounded-lg focus:border-green-500 outline-none" value={terminoBusqueda} onChange={(e) => setTerminoBusqueda(e.target.value)} /><button type="submit" disabled={!terminoBusqueda} className="absolute right-2 top-1.5 bg-green-600 hover:bg-green-500 text-black font-bold text-xs px-3 py-1.5 rounded disabled:opacity-50">Buscar</button></form></div><div className="flex-1 overflow-y-auto custom-scrollbar p-4 bg-[#0f0f0f] min-h-[200px]">{!buscando && resultadosBusqueda.length === 0 && <div className="h-full flex flex-col items-center justify-center text-gray-500 opacity-60"><span className="text-4xl mb-2">🖼️</span><p>Busca o pega URL</p></div>}{!buscando && resultadosBusqueda.length > 0 && <div className="grid grid-cols-2 md:grid-cols-3 gap-3">{resultadosBusqueda.map((url, i) => (<div key={i} onClick={() => {setCover(url); setMostrandoGaleria(false);}} className="group relative h-28 rounded-lg cursor-pointer overflow-hidden border border-transparent hover:border-green-500 transition-all hover:scale-105"><img src={url} alt="Result" className="w-full h-full object-cover" loading="lazy" /></div>))}</div>}</div><div className="p-4 border-t border-gray-800 bg-[#151515]"><p className="text-xs text-gray-500 mb-2 font-bold uppercase">O pega URL:</p><input type="text" placeholder="https://..." className="w-full bg-[#050505] border border-gray-700 text-white px-3 py-2 rounded text-sm focus:border-green-500 outline-none font-mono" onKeyDown={(e) => { if(e.key === 'Enter') { setCover(e.target.value); setMostrandoGaleria(false); } }} /></div></div></div>)}
+
+      {/* RENDERIZADO DEL MODAL DE TIME MACHINE */}
+      {mostrandoTimeMachine && nota?.id && (
+          <TimeMachine 
+              notaId={nota.id} 
+              onClose={() => setMostrandoTimeMachine(false)} 
+              onRestaurar={handleRestaurarVersion} 
+          />
+      )}
 
       <style>{`
         .notion-editor-container .ql-toolbar.ql-snow { border: none !important; position: sticky; top: 0; z-index: 10; background: #050505; border-bottom: 1px solid rgba(255,255,255,0.1) !important; padding: 10px 0; opacity: 0.3; transition: opacity 0.3s; }
