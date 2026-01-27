@@ -10,10 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@hello-pangea/dnd": "^18.0.1",
     "@react-spring/three": "^10.0.3",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "firebase": "^12.7.0",
+    "highlight.js": "^11.11.1",
     "html2pdf.js": "^0.14.0",
     "quill-blot-formatter": "^1.0.5",
     "react": "^19.2.0",

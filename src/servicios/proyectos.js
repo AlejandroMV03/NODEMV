@@ -24,6 +24,20 @@ export const crearProyecto = async (userId, emailOwner, nombre, descripcion) => 
     }
 };
 
+export const actualizarTarea = async (tareaId, nuevosDatos) => {
+    try {
+        const tareaRef = doc(db, "tareas", tareaId);
+        await updateDoc(tareaRef, {
+            ...nuevosDatos,
+            fechaEdicion: new Date() // Opcional: registrar cuándo se editó
+        });
+        return true;
+    } catch (e) {
+        console.error("Error al actualizar tarea:", e);
+        return false;
+    }
+};
+
 // --- OBTENER PROYECTOS (Míos + Compartidos) ---
 export const obtenerProyectos = async (userId, userEmail) => {
     const proyectosMap = new Map(); // Usamos un Map para evitar duplicados
